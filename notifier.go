@@ -62,14 +62,19 @@ func (email Email) BugsnagUserEmail() string {
 	return string(email)
 }
 
-// notify formats and sends this log record off to bugsnag, if it is of the
-// sufficient level
-func (h *Handler) notify(ctx context.Context, t time.Time, lvl slog.Level, msg string, pc uintptr, attrs []slog.Attr) {
-	// Exit if record level is less than notify level
-	if lvl < h.notifyLevel.Level() {
-		return
-	}
+// bug type contains everything needed to be sent off to bugsnag
+type bug struct {
+	ctx   context.Context
+	t     time.Time
+	lvl   slog.Level
+	msg   string
+	pc    uintptr
+	attrs []slog.Attr
+}
 
+// notify formats and sends this log record off to bugsnag.
+// The level of the error should be checked if sufficient or not before calling.
+func (h *Handler) notify(ctx context.Context, t time.Time, lvl slog.Level, msg string, pc uintptr, attrs []slog.Attr) {
 	// Do we report this bugsnag as unhandled or handled?
 	var unhandled bool
 	if lvl >= h.unhandledLevel.Level() {

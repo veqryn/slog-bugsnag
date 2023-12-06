@@ -3,7 +3,11 @@ package slogbugsnag
 import (
 	"context"
 	"log/slog"
+	"runtime"
 	"slices"
+	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/bugsnag/bugsnag-go/v2"
 )
@@ -27,6 +31,13 @@ type HandlerOptions struct {
 	// Notifier is the bugsnag notifier that will be used. It should be
 	// configured, and may contain custom rawData added to all events.
 	Notifier *bugsnag.Notifier
+
+	// MaxNotifierConcurrency sets the maximum number of bugs that can be sent
+	// to bugsnag in parallel. It defaults to the number of CPU's.
+	// Bugs are placed on a buffered channel to be sent to bugsnag, in order
+	// to not block or delay the log call from returning. The bugs are then
+	// sent to bugsnag asynchronously by a number of workers equal to this int.
+	MaxNotifierConcurrency int
 }
 
 // Handler is a slog.Handler middleware that will ...
@@ -36,6 +47,9 @@ type Handler struct {
 	notifyLevel    slog.Leveler
 	unhandledLevel slog.Leveler
 	notifier       *bugsnag.Notifier
+	bugsCh         chan bug
+	workerWG       *sync.WaitGroup
+	closed         *atomic.Bool
 }
 
 var _ slog.Handler = &Handler{} // Assert conformance with interface
@@ -77,13 +91,21 @@ func NewHandler(next slog.Handler, opts *HandlerOptions) *Handler {
 	if opts.Notifier == nil {
 		opts.Notifier = bugsnag.New()
 	}
+	if opts.MaxNotifierConcurrency < 1 {
+		opts.MaxNotifierConcurrency = runtime.NumCPU()
+	}
 
-	return &Handler{
+	h := &Handler{
 		next:           next,
 		notifyLevel:    opts.NotifyLevel,
 		unhandledLevel: opts.UnhandledLevel,
 		notifier:       opts.Notifier,
+		bugsCh:         make(chan bug, 4000),
+		workerWG:       &sync.WaitGroup{},
+		closed:         &atomic.Bool{},
 	}
+	go h.startNotifierWorkers(opts.MaxNotifierConcurrency)
+	return h
 }
 
 // Enabled reports whether the next handler handles records at the given level.
@@ -127,8 +149,24 @@ func (h *Handler) Handle(ctx context.Context, r slog.Record) error {
 	// Add deduplicated attributes back in
 	newR.AddAttrs(finalAttrs...)
 
-	// Notify bugsnag
-	h.notify(ctx, newR.Time, newR.Level, newR.Message, newR.PC, finalAttrs)
+	// Put on the channel to be sent to bugsnag
+	if newR.Level >= h.notifyLevel.Level() && !h.closed.Load() {
+		bug := bug{
+			ctx:   ctx,
+			t:     newR.Time,
+			lvl:   newR.Level,
+			msg:   newR.Message,
+			pc:    newR.PC,
+			attrs: finalAttrs,
+		}
+
+		select {
+		case h.bugsCh <- bug:
+		default:
+			// The buffered channel is full, the workers can't keep up,
+			h.logBufferFull(ctx, bug.msg, bug.pc)
+		}
+	}
 
 	// Pass off to the next handler
 	return h.next.Handle(ctx, *newR)
@@ -147,4 +185,40 @@ func (h *Handler) WithAttrs(attrs []slog.Attr) slog.Handler {
 	h2 := *h
 	h2.goa = h2.goa.WithAttrs(attrs)
 	return &h2
+}
+
+// Close stops the handler from sending any new bugs after this point to bugsnag,
+// but it will continue to pass the log records to the next handler.
+// This call will block until all bugs currently in flight have been sent.
+func (h *Handler) Close() {
+	h.closed.Store(true)
+	close(h.bugsCh)
+	h.workerWG.Wait()
+}
+
+// startNotifierWorkers starts a number of goroutines that consume from the
+// bugsCh and notify bugsnag.
+func (h *Handler) startNotifierWorkers(workerCount int) {
+	h.workerWG.Add(workerCount)
+	for i := 0; i < workerCount; i++ {
+		go func() {
+			defer h.workerWG.Done()
+			for bug := range h.bugsCh {
+				h.notify(bug.ctx, bug.t, bug.lvl, bug.msg, bug.pc, bug.attrs)
+			}
+		}()
+	}
+}
+
+// logBufferFull sends a log message directly to the next handler to record
+// that the buffered channel is full and that the workers can't keep up.
+func (h *Handler) logBufferFull(ctx context.Context, originalMsg string, pc uintptr) {
+	bsR := slog.Record{
+		Time:    time.Now(),
+		Message: "slog-bugsnag bug buffer full; increase max concurrency or decrease bugs",
+		Level:   slog.LevelError,
+		PC:      pc,
+	}
+	bsR.AddAttrs(slog.String("original", originalMsg))
+	_ = h.next.Handle(ctx, bsR)
 }
