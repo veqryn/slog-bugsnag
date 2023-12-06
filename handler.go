@@ -47,7 +47,7 @@ type Handler struct {
 	notifyLevel    slog.Leveler
 	unhandledLevel slog.Leveler
 	notifier       *bugsnag.Notifier
-	bugsCh         chan bug
+	bugsCh         chan bugRecord
 	workerWG       *sync.WaitGroup
 	closed         *atomic.Bool
 }
@@ -75,7 +75,7 @@ func NewMiddleware(options *HandlerOptions) func(slog.Handler) slog.Handler {
 
 // NewHandler creates a Handler slog.Handler middleware that will ...
 // If opts is nil, the default options are used.
-// Bugsnag should be configurated before any logging is done.
+// Bugsnag should be configured before any logging is done.
 //
 //	bugsnag.Configure(bugsnag.Configuration{APIKey: ...})
 func NewHandler(next slog.Handler, opts *HandlerOptions) *Handler {
@@ -100,7 +100,7 @@ func NewHandler(next slog.Handler, opts *HandlerOptions) *Handler {
 		notifyLevel:    opts.NotifyLevel,
 		unhandledLevel: opts.UnhandledLevel,
 		notifier:       opts.Notifier,
-		bugsCh:         make(chan bug, 4000),
+		bugsCh:         make(chan bugRecord, 4000),
 		workerWG:       &sync.WaitGroup{},
 		closed:         &atomic.Bool{},
 	}
@@ -151,7 +151,7 @@ func (h *Handler) Handle(ctx context.Context, r slog.Record) error {
 
 	// Put on the channel to be sent to bugsnag
 	if newR.Level >= h.notifyLevel.Level() && !h.closed.Load() {
-		bug := bug{
+		bug := bugRecord{
 			ctx:   ctx,
 			t:     newR.Time,
 			lvl:   newR.Level,
