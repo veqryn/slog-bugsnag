@@ -19,6 +19,8 @@ type sanitizer struct {
 	Seen    []interface{}
 }
 
+// Sanitize resolves any interface into a value that bugsnag can display,
+// as well as removing filtered params and recursion from meta-data.
 func (s sanitizer) Sanitize(data interface{}) interface{} {
 	for _, s := range s.Seen {
 		// TODO: we don't need deep equal here, just type-ignoring equality

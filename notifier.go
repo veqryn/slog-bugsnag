@@ -63,7 +63,7 @@ func (email Email) BugsnagUserEmail() string {
 }
 
 // bug type contains everything needed to be sent off to bugsnag
-type bug struct {
+type bugRecord struct {
 	ctx   context.Context
 	t     time.Time
 	lvl   slog.Level
@@ -132,7 +132,7 @@ func (h *Handler) accumulateRawData(errForBugsnag *error, user *bugsnag.User, md
 			continue
 		}
 
-		// Because we the attributes slice we are iterating through is ordered from
+		// Because the attributes slice we are iterating through is ordered from
 		// oldest to newest, we should overwrite the error/user to get the latest one.
 		// Because there could be multiple, we still add these to the MetaData map.
 		switch t := attr.Value.Any().(type) {
