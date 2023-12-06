@@ -94,16 +94,10 @@ func (h *Handler) Enabled(ctx context.Context, level slog.Level) bool {
 
 // Handle collects all attributes and groups, then passes the record and its attributes to the next handler.
 func (h *Handler) Handle(ctx context.Context, r slog.Record) error {
-	// Find the newest `error` type and save it, to send to bugsnag.
-	var errForBugsnag error
-
 	// Collect all attributes from the record (which is the most recent attribute set).
 	// These attributes are ordered from oldest to newest, and our collection will be too.
 	finalAttrs := make([]slog.Attr, 0, r.NumAttrs())
 	r.Attrs(func(a slog.Attr) bool {
-		if e, ok := a.Value.Any().(error); ok {
-			errForBugsnag = e // Overwrite to get the latest, for this set of attributes
-		}
 		finalAttrs = append(finalAttrs, a)
 		return true
 	})
@@ -117,13 +111,6 @@ func (h *Handler) Handle(ctx context.Context, r slog.Record) error {
 				Value: slog.GroupValue(finalAttrs...),
 			}}
 		} else {
-			if errForBugsnag == nil {
-				for _, a := range g.attrs {
-					if e, ok := a.Value.Any().(error); ok {
-						errForBugsnag = e // Overwrite to get the latest, for this set of attributes
-					}
-				}
-			}
 			// Prepend to the front of finalAttrs, because finalAttrs is ordered from oldest to newest
 			finalAttrs = append(slices.Clip(g.attrs), finalAttrs...)
 		}
@@ -141,7 +128,7 @@ func (h *Handler) Handle(ctx context.Context, r slog.Record) error {
 	newR.AddAttrs(finalAttrs...)
 
 	// Notify bugsnag
-	h.notify(ctx, newR.Time, newR.Level, newR.Message, newR.PC, errForBugsnag, finalAttrs)
+	h.notify(ctx, newR.Time, newR.Level, newR.Message, newR.PC, finalAttrs)
 
 	// Pass off to the next handler
 	return h.next.Handle(ctx, *newR)

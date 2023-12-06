@@ -2,53 +2,69 @@ package slogbugsnag
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"runtime"
 	"time"
 
 	"github.com/bugsnag/bugsnag-go/v2"
-	bserrors "github.com/bugsnag/bugsnag-go/v2/errors"
-	perrors "github.com/pkg/errors"
 )
 
-var _ errorWithCallers = errorWithCallers{} // Validate implements interface
-
-// errorWithCallers exists to let us add a caller stack trace onto any error
-// that is missing one, starting at the point where the log method is called.
-type errorWithCallers struct {
-	error
-	stack []uintptr
+// bugsnagUserID is a sentinel interface that gives you another option to
+// customize how bugsnag fills the ID in the "User" tab
+type bugsnagUserID interface {
+	BugsnagUserID() string
 }
 
-// Callers returns the raw stack frames as returned by runtime.Callers()
-func (e errorWithCallers) Callers() []uintptr {
-	return e.stack[:]
+// bugsnagUserName is a sentinel interface that gives you another option to
+// customize how bugsnag fills the Name in the "User" tab
+type bugsnagUserName interface {
+	BugsnagUserName() string
 }
 
-// Unwrap provides compatibility for Go 1.13 error chains.
-func (e errorWithCallers) Unwrap() error { return e.error }
-
-// withCallers is an error-with-stack-trace trace interface that
-// [github.com/bugsnag/bugsnag-go/v2/errors.Error] supports
-type withCallers interface {
-	Callers() []uintptr
+// bugsnagUserEmail is a sentinel interface that gives you another option to
+// customize how bugsnag fills the Email in the "User" tab
+type bugsnagUserEmail interface {
+	BugsnagUserEmail() string
 }
 
-// withCallers is an error-with-stack-trace interface that
-// [github.com/bugsnag/bugsnag-go/v2/errors.Error] supports
-type withBSStackFrames interface {
-	StackFrames() []bserrors.StackFrame
+var _ bugsnagUserID = ID("") // Validate implements interface
+
+// ID is a string that, if used as a log attribute value, will be filled in
+// on the [bugsnag.User] struct. The ID is also used to determine the number
+// of users affected by the bug, in bugsnag's system.
+type ID string
+
+// BugsnagUserID returns the bugsnag user id
+func (id ID) BugsnagUserID() string {
+	return string(id)
 }
 
-// withCallers is an error-with-stack-trace interface that
-// [github.com/bugsnag/bugsnag-go/v2/errors.Error] supports
-type withPStackTrace interface {
-	StackTrace() perrors.StackTrace
+var _ bugsnagUserName = Name("") // Validate implements interface
+
+// Name is a string that, if used as a log attribute value, will be filled in
+// on the [bugsnag.User] struct.
+type Name string
+
+// BugsnagUserName returns the bugsnag user name
+func (name Name) BugsnagUserName() string {
+	return string(name)
 }
 
-func (h *Handler) notify(ctx context.Context, t time.Time, lvl slog.Level, msg string, pc uintptr, errForBugsnag error, attrs []slog.Attr) {
+var _ bugsnagUserEmail = Email("") // Validate implements interface
+
+// Email is a string that, if used as a log attribute value, will be filled in
+// on the [bugsnag.User] struct.
+type Email string
+
+// BugsnagUserEmail returns the bugsnag user email
+func (email Email) BugsnagUserEmail() string {
+	return string(email)
+}
+
+// notify formats and sends this log record off to bugsnag, if it is of the
+// sufficient level
+func (h *Handler) notify(ctx context.Context, t time.Time, lvl slog.Level, msg string, pc uintptr, attrs []slog.Attr) {
 	// Exit if record level is less than notify level
 	if lvl < h.notifyLevel.Level() {
 		return
@@ -60,40 +76,17 @@ func (h *Handler) notify(ctx context.Context, t time.Time, lvl slog.Level, msg s
 		unhandled = true
 	}
 
-	// Ensure the error is not nil. Use the log message for the error if not.
-	if errForBugsnag == nil {
-		errForBugsnag = errors.New(msg)
-	}
-
 	// Format the log source line
 	frameStack := runtime.CallersFrames([]uintptr{pc})
 	frame, _ := frameStack.Next()
 	source := fmt.Sprintf("%s:%d", frame.Function, frame.Line)
 
-	// Ensure our error has a caller/stack/frame trace
-	switch e := errForBugsnag.(type) {
-	case *bserrors.Error, withCallers, withBSStackFrames, withPStackTrace:
-		// Do nothing, these errors already have a full stack
-	default:
-		// Recreate the callers stack trace, based on the log program counter
-		stack := make([]uintptr, bserrors.MaxStackDepth)
-		length := runtime.Callers(0, stack[:])
-		stack = stack[:length]
-		// Iterate until we find our log line program counter, then accumulate the stack callers
-		for idx, ptr := range stack {
-			if ptr == pc {
-				errForBugsnag = errorWithCallers{
-					error: e,
-					stack: stack[idx:],
-				}
-				break
-			}
-		}
-	}
-
-	// Create MetaData for all the other information in the log
+	// Find the errors and bugsnag.User's in the log attributes.
+	// Create MetaData for all the other information in the log.
+	var errForBugsnag error
+	user := bugsnag.User{}
 	md := bugsnag.MetaData{}
-	h.accumulateMetaData(md, "log", attrs)
+	h.accumulateRawData(&errForBugsnag, &user, md, "log", attrs)
 
 	// Add in the log record info
 	md.Add("log", "time", t.Format(time.RFC3339Nano))
@@ -101,38 +94,71 @@ func (h *Handler) notify(ctx context.Context, t time.Time, lvl slog.Level, msg s
 	md.Add("log", "msg", msg)
 	md.Add("log", "source", source)
 
-	// Notify Bugsnag. Ignore the error because bugsnag has already logged it.
-	_ = h.notifier.NotifySync(
-		errForBugsnag,
-		true, // TODO: Buffered Channel + worker pool
+	// Ensure the error is not nil and has a stack trace
+	errForBugsnag = newErrorWithStack(errForBugsnag, msg, pc)
+
+	// The order matters
+	rawData := []any{
 		ctx,
 		bugsnag.Context{String: msg},
 		bugsnag.HandledState{Unhandled: unhandled},
-		bsSeverity(lvl),
+		bsSeverity(lvl), // Must come after HandledState
 		md,
-	)
+	}
+	if user.Id != "" || user.Name != "" || user.Email != "" {
+		rawData = append(rawData, user)
+	}
+
+	// Notify Bugsnag. Ignore the error because bugsnag has already logged it.
+	_ = h.notifier.NotifySync(errForBugsnag, true, rawData...)
 }
 
-// accumulateMetaData recursively iterates through all attributes and turns them
+// accumulateRawData recursively iterates through all attributes and turns them
 // into [bugsnag.MetaData] tabs. The log tab is used for all root-level attributes.
 // All attributes in groups get their own tab, named after the group.
 // Attribute values are redacted based on the notifier config ParamsFilters.
-func (h *Handler) accumulateMetaData(md bugsnag.MetaData, tab string, attrs []slog.Attr) {
+// accumulateRawData also finds the latest [error] and [bugsnag.User].
+func (h *Handler) accumulateRawData(errForBugsnag *error, user *bugsnag.User, md bugsnag.MetaData, tab string, attrs []slog.Attr) {
 	san := sanitizer{Filters: h.notifier.Config.ParamsFilters}
 
 	for _, attr := range attrs {
 		if attr.Value.Kind() == slog.KindGroup {
-			h.accumulateMetaData(md, attr.Key, attr.Value.Group())
-
-		} else {
-			if shouldRedact(attr.Key, h.notifier.Config.ParamsFilters) {
-				md.Add(tab, attr.Key, "[FILTERED]")
-
-			} else {
-				val := san.Sanitize(attr.Value.Resolve().Any())
-				md.Add(tab, attr.Key, val)
-			}
+			h.accumulateRawData(errForBugsnag, user, md, attr.Key, attr.Value.Group())
+			continue
 		}
+
+		// Because we the attributes slice we are iterating through is ordered from
+		// oldest to newest, we should overwrite the error/user to get the latest one.
+		// Because there could be multiple, we still add these to the MetaData map.
+		switch t := attr.Value.Any().(type) {
+		case error:
+			if t != nil {
+				*errForBugsnag = t
+			}
+
+		case bugsnag.User:
+			*user = t
+
+		case bugsnagUserID:
+			user.Id = t.BugsnagUserID()
+
+		case bugsnagUserName:
+			user.Name = t.BugsnagUserName()
+
+		case bugsnagUserEmail:
+			user.Email = t.BugsnagUserEmail()
+		}
+
+		// Replace with filtered if the key matches
+		if shouldRedact(attr.Key, h.notifier.Config.ParamsFilters) {
+			md.Add(tab, attr.Key, "[FILTERED]")
+			continue
+		}
+
+		// Always resolve log attribute values
+		attr.Value = attr.Value.Resolve()
+		val := san.Sanitize(attr.Value.Any())
+		md.Add(tab, attr.Key, val)
 	}
 }
 
