@@ -146,7 +146,7 @@ func (h *Handler) Handle(ctx context.Context, r slog.Record) error {
 		PC:      r.PC,
 	}
 
-	// Add deduplicated attributes back in
+	// Add attributes back in
 	newR.AddAttrs(finalAttrs...)
 
 	// Put on the channel to be sent to bugsnag
