@@ -14,6 +14,7 @@ http://golang.org/src/pkg/encoding/json/tags_test.go
 */
 
 func TestTagParsing(t *testing.T) {
+	t.Parallel()
 	name, opts := parseTag("field,foobar,foo")
 	if name != "field" {
 		t.Fatalf("name = %q, want field", name)

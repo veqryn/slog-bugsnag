@@ -32,6 +32,7 @@ func (_textMarshaller) MarshalText() ([]byte, error) {
 }
 
 func TestSanitize(t *testing.T) {
+	t.Parallel()
 	var broken = _broken{}
 	broken.Me = &broken
 	broken.Data = "ohai"
@@ -110,6 +111,7 @@ func TestSanitize(t *testing.T) {
 }
 
 func TestSanitizerSanitize(t *testing.T) {
+	t.Parallel()
 	var (
 		nilPointer   *int
 		nilInterface = any(nil)
