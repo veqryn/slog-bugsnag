@@ -1,8 +1,10 @@
 package slogbugsnag
 
 import (
+	"errors"
 	"reflect"
 	"testing"
+	"time"
 )
 
 type _account struct {
@@ -21,6 +23,12 @@ type _account struct {
 type _broken struct {
 	Me   *_broken
 	Data string
+}
+
+type _textMarshaller struct{}
+
+func (_textMarshaller) MarshalText() ([]byte, error) {
+	return []byte("marshalled text"), nil
 }
 
 func TestSanitize(t *testing.T) {
@@ -45,6 +53,10 @@ func TestSanitize(t *testing.T) {
 			"func":     func() {},
 			"string":   "string",
 			"password": "secret",
+			"error":    errors.New("some error"),
+			"time":     time.Date(2023, 12, 5, 23, 59, 59, 123456789, time.UTC),
+			"duration": 105567462 * time.Millisecond,
+			"text":     _textMarshaller{},
 			"array": []map[string]any{{
 				"creditcard": "1234567812345678",
 				"broken":     broken,
@@ -66,6 +78,10 @@ func TestSanitize(t *testing.T) {
 			"string":   "string",
 			"func":     "[func()]",
 			"password": "[FILTERED]",
+			"error":    "some error",
+			"time":     "2023-12-05T23:59:59.123456789Z",
+			"duration": "29h19m27.462s",
+			"text":     "marshalled text",
 			"array": []any{map[string]any{
 				"creditcard": "[FILTERED]",
 				"broken": map[string]any{
@@ -91,7 +107,6 @@ func TestSanitize(t *testing.T) {
 	}) {
 		t.Errorf("metadata.Sanitize didn't work: %#v", actual)
 	}
-
 }
 
 func TestSanitizerSanitize(t *testing.T) {
