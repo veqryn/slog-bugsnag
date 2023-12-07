@@ -16,12 +16,12 @@ It has been modified to support well known types like error, time, and stringers
 // Sanitizer is used to remove filtered params and recursion from meta-data.
 type sanitizer struct {
 	Filters []string
-	Seen    []interface{}
+	Seen    []any
 }
 
 // Sanitize resolves any interface into a value that bugsnag can display,
 // as well as removing filtered params and recursion from meta-data.
-func (s sanitizer) Sanitize(data interface{}) interface{} {
+func (s sanitizer) Sanitize(data any) any {
 	for _, s := range s.Seen {
 		// TODO: we don't need deep equal here, just type-ignoring equality
 		if reflect.DeepEqual(data, s) {
@@ -76,7 +76,7 @@ func (s sanitizer) Sanitize(data interface{}) interface{} {
 		return s.Sanitize(v.Elem().Interface())
 
 	case reflect.Array, reflect.Slice:
-		ret := make([]interface{}, v.Len())
+		ret := make([]any, v.Len())
 		for i := 0; i < v.Len(); i++ {
 			ret[i] = s.Sanitize(v.Index(i).Interface())
 		}
@@ -95,8 +95,8 @@ func (s sanitizer) Sanitize(data interface{}) interface{} {
 	}
 }
 
-func (s sanitizer) sanitizeMap(v reflect.Value) interface{} {
-	ret := make(map[string]interface{})
+func (s sanitizer) sanitizeMap(v reflect.Value) any {
+	ret := make(map[string]any)
 
 	for _, key := range v.MapKeys() {
 		val := s.Sanitize(v.MapIndex(key).Interface())
@@ -112,8 +112,8 @@ func (s sanitizer) sanitizeMap(v reflect.Value) interface{} {
 	return ret
 }
 
-func (s sanitizer) sanitizeStruct(v reflect.Value, t reflect.Type) interface{} {
-	ret := make(map[string]interface{})
+func (s sanitizer) sanitizeStruct(v reflect.Value, t reflect.Type) any {
+	ret := make(map[string]any)
 
 	for i := 0; i < v.NumField(); i++ {
 
