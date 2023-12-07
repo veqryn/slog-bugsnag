@@ -1,3 +1,7 @@
+// Copyright 2011 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
 package slogbugsnag
 
 import (
@@ -5,8 +9,8 @@ import (
 )
 
 /*
-The code is stripped from:
-http://golang.org/src/pkg/encoding/json/tags.go?m=text
+The code is taken from:
+http://golang.org/src/pkg/encoding/json/tags.go
 */
 
 // tagOptions is the string following a comma in a struct field's "json"
