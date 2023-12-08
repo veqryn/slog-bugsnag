@@ -15,9 +15,11 @@ import (
 	"time"
 
 	"github.com/bugsnag/bugsnag-go/v2"
+	"github.com/bugsnag/bugsnag-go/v2/device"
 )
 
 func init() {
+	device.GetRuntimeVersions() // TODO: fix issue in vendored bugsnag's library
 	bugsnag.Configure(bugsnag.Configuration{
 		APIKey: "1234567890abcdef1234567890abcdef", // Should be set by env var, 32 characters
 
@@ -203,6 +205,7 @@ func TestLogToBug(t *testing.T) {
 			}
 
 			// Replace source field since it changes
+			t.Log(payload.Events[0].MetaData["log"]["source"])
 			expectation.Events[0].MetaData["log"]["source"] = payload.Events[0].MetaData["log"]["source"]
 
 			if !reflect.DeepEqual(payload, expectation) {

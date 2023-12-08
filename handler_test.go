@@ -25,6 +25,9 @@ func TestHandler(t *testing.T) {
 				ErrorClass string `json:"errorClass"`
 				Message    string `json:"message"`
 			}{{
+				ErrorClass: "slogbugsnag.errorWithCallers",
+				Message:    "main message",
+			}, {
 				ErrorClass: "*errors.errorString",
 				Message:    "main message",
 			}},
@@ -32,7 +35,7 @@ func TestHandler(t *testing.T) {
 				"log": {
 					"time":   "2023-09-29T13:00:59Z",
 					"level":  "ERROR",
-					"source": "replaceme",
+					"source": "github.com/veqryn/slog-bugsnag.TestHandler:97",
 					"msg":    "main message",
 					"with1":  "arg0",
 				},
@@ -63,8 +66,8 @@ func TestHandler(t *testing.T) {
 			}
 
 			// Replace source field since it changes
-			expectation.Events[0].MetaData["log"]["source"] = payload.Events[0].MetaData["log"]["source"]
-			expectation.Events[0].MetaData["log"] = payload.Events[0].MetaData["log"] // TODO: Deleteme
+			t.Log(payload.Events[0].MetaData["log"]["source"])
+			expectation.Events[0].MetaData["log"]["time"] = payload.Events[0].MetaData["log"]["time"]
 
 			if !reflect.DeepEqual(payload, expectation) {
 				t.Errorf("%#+v\n", payload)
