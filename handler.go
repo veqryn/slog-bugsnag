@@ -30,6 +30,7 @@ type HandlerOptions struct {
 
 	// Notifier is the bugsnag notifier that will be used. It should be
 	// configured, and may contain custom rawData added to all events.
+	// If nil, a default one will be created.
 	Notifier *bugsnag.Notifier
 
 	// MaxNotifierConcurrency sets the maximum number of bugs that can be sent
@@ -40,7 +41,16 @@ type HandlerOptions struct {
 	MaxNotifierConcurrency int
 }
 
-// Handler is a slog.Handler middleware that will ...
+// Handler is a slog.Handler middleware that will automatically send log
+// lines to Bugsnag (https://www.bugsnag.com/) if they are at least a certain
+// level (Error by default).
+// The latest error in the log line is sent as theprimary error, and all log
+// attributes and the context are put into metadata and user tabs and sent with
+// the bug.
+// It passes the final record and attributes off to the enxt handler when finished.
+// The Bugsnag V2 library should be configured before any logging is done.
+//
+//	bugsnag.Configure(bugsnag.Configuration{APIKey: ...})
 type Handler struct {
 	next           slog.Handler
 	goa            *groupOrAttrs
@@ -73,11 +83,18 @@ func NewMiddleware(options *HandlerOptions) func(slog.Handler) slog.Handler {
 	}
 }
 
-// NewHandler creates a Handler slog.Handler middleware that will ...
-// If opts is nil, the default options are used.
-// Bugsnag should be configured before any logging is done.
+// NewHandler creates a slog.Handler middleware that will automatically send log
+// lines to Bugsnag (https://www.bugsnag.com/) if they are at least a certain
+// level (Error by default).
+// The latest error in the log line is sent as theprimary error, and all log
+// attributes and the context are put into metadata and user tabs and sent with
+// the bug.
+// It passes the final record and attributes off to the enxt handler when finished.
+// The Bugsnag V2 library should be configured before any logging is done.
 //
 //	bugsnag.Configure(bugsnag.Configuration{APIKey: ...})
+//
+// If opts is nil, the default options are used.
 func NewHandler(next slog.Handler, opts *HandlerOptions) *Handler {
 	if opts == nil {
 		opts = &HandlerOptions{}
@@ -151,20 +168,11 @@ func (h *Handler) Handle(ctx context.Context, r slog.Record) error {
 
 	// Put on the channel to be sent to bugsnag
 	if newR.Level >= h.notifyLevel.Level() && !h.closed.Load() {
-		bug := bugRecord{
-			ctx:   ctx,
-			t:     newR.Time,
-			lvl:   newR.Level,
-			msg:   newR.Message,
-			pc:    newR.PC,
-			attrs: finalAttrs,
-		}
-
 		select {
-		case h.bugsCh <- bug:
+		case h.bugsCh <- h.logToBug(ctx, newR.Time, newR.Level, newR.Message, newR.PC, finalAttrs):
 		default:
 			// The buffered channel is full, the workers can't keep up,
-			h.logBufferFull(ctx, bug.msg, bug.pc)
+			h.logBufferFull(ctx, newR.Message, newR.PC)
 		}
 	}
 
@@ -204,7 +212,8 @@ func (h *Handler) startNotifierWorkers(workerCount int) {
 		go func() {
 			defer h.workerWG.Done()
 			for bug := range h.bugsCh {
-				h.notify(bug.ctx, bug.t, bug.lvl, bug.msg, bug.pc, bug.attrs)
+				// Notify Bugsnag. Ignore the error because bugsnag has already logged it.
+				_ = h.notifier.NotifySync(bug.err, true, bug.rawData...)
 			}
 		}()
 	}

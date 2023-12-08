@@ -116,7 +116,7 @@ type bugsnagEvent struct {
 	} `json:"user"`
 }
 
-func kTestNotify(t *testing.T) {
+func TestLogToBug(t *testing.T) {
 	t.Parallel()
 
 	// Set expectation payload
@@ -275,8 +275,14 @@ func kTestNotify(t *testing.T) {
 		),
 	}
 
-	// Call notify
-	h.notify(ctx, defaultTime, slog.LevelError, "main message", pc, attrs)
+	// Call log to bug
+	bug := h.logToBug(ctx, defaultTime, slog.LevelError, "main message", pc, attrs)
+
+	// Send the bug to our fake bugsnag server to verify the content
+	err = h.notifier.NotifySync(bug.err, true, bug.rawData...)
+	if err != nil {
+		t.Error("Unable to notify with bug")
+	}
 
 	if !receivedCall.Load() {
 		t.Error("Test server did not receive call")

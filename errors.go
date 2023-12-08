@@ -2,7 +2,9 @@ package slogbugsnag
 
 import (
 	"errors"
+	"fmt"
 	"runtime"
+	"strings"
 
 	bserrors "github.com/bugsnag/bugsnag-go/v2/errors"
 	perrors "github.com/pkg/errors"
@@ -42,6 +44,24 @@ func (e errorWithCallers) Callers() []uintptr {
 
 // Unwrap provides compatibility for Go 1.13 error chains.
 func (e errorWithCallers) Unwrap() error { return e.error }
+
+// String returns the string representation of this error with its stacktrace
+func (e errorWithCallers) String() string {
+	return fmt.Sprintf("%T: %v\n\t%s", e.error, e.error, strings.Join(debugStack(e.stack), "\n\t"))
+}
+
+// debugStack returns the frame stack in string format for debugging
+func debugStack(pcs []uintptr) []string {
+	var trace []string
+	fs := runtime.CallersFrames(pcs)
+	for f, more := fs.Next(); ; f, more = fs.Next() {
+		trace = append(trace, fmt.Sprintf("%s:%d", f.Function, f.Line))
+		if !more {
+			break
+		}
+	}
+	return trace
+}
 
 // newErrorWithStack ensures we have a non-nil error that includes a full stack
 // trace, using either the one it came with or generating one from the log line

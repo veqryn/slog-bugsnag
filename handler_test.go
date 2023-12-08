@@ -88,6 +88,7 @@ func TestHandler(t *testing.T) {
 	h := NewMiddleware(opts)(tester)
 
 	log := slog.New(h)
+	log = log.With().WithGroup("")
 	log = log.With("with1", "arg0")
 	log = log.WithGroup("group1")
 	log.Error("main message", "main1", "arg0")
