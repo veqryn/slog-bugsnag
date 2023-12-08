@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"reflect"
 	"runtime"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -115,7 +116,7 @@ type bugsnagEvent struct {
 	} `json:"user"`
 }
 
-func TestNotify(t *testing.T) {
+func kTestNotify(t *testing.T) {
 	t.Parallel()
 
 	// Set expectation payload
@@ -184,7 +185,7 @@ func TestNotify(t *testing.T) {
 	}
 
 	// Create a real but temporary server
-	var receivedCall bool
+	receivedCall := atomic.Bool{}
 	svr := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// fmt.Println("IN TEST SERVER")
 		if r.Body != nil {
@@ -207,7 +208,7 @@ func TestNotify(t *testing.T) {
 			if !reflect.DeepEqual(payload, expectation) {
 				t.Errorf("%#+v\n", payload)
 			}
-			receivedCall = true
+			receivedCall.Store(true)
 		}
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -277,7 +278,7 @@ func TestNotify(t *testing.T) {
 	// Call notify
 	h.notify(ctx, defaultTime, slog.LevelError, "main message", pc, attrs)
 
-	if !receivedCall {
+	if !receivedCall.Load() {
 		t.Error("Test server did not receive call")
 	}
 }

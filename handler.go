@@ -104,7 +104,7 @@ func NewHandler(next slog.Handler, opts *HandlerOptions) *Handler {
 		workerWG:       &sync.WaitGroup{},
 		closed:         &atomic.Bool{},
 	}
-	go h.startNotifierWorkers(opts.MaxNotifierConcurrency)
+	h.startNotifierWorkers(opts.MaxNotifierConcurrency)
 	return h
 }
 
