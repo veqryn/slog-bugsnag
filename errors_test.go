@@ -21,6 +21,8 @@ func TestNewErrorWithStackNil(t *testing.T) {
 		t.Fatalf("expected errorWithCallers; Got: %T", err)
 	}
 
+	t.Log(e.String())
+
 	if e.Unwrap().Error() != "oh no" || e.Unwrap() != e.error || e.error.Error() != e.Error() {
 		t.Error("wrong error:", e.Unwrap().Error())
 	}

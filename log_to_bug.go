@@ -62,19 +62,15 @@ func (email Email) BugsnagUserEmail() string {
 	return string(email)
 }
 
-// bug type contains everything needed to be sent off to bugsnag
+// bug type contains everything needed to be sent off to bugsnag, preformatted
 type bugRecord struct {
-	ctx   context.Context
-	t     time.Time
-	lvl   slog.Level
-	msg   string
-	pc    uintptr
-	attrs []slog.Attr
+	err     error
+	rawData []any
 }
 
-// notify formats and sends this log record off to bugsnag.
+// logToBug creates and formats a bug, from a log record and attributes.
 // The level of the error should be checked if sufficient or not before calling.
-func (h *Handler) notify(ctx context.Context, t time.Time, lvl slog.Level, msg string, pc uintptr, attrs []slog.Attr) {
+func (h *Handler) logToBug(ctx context.Context, t time.Time, lvl slog.Level, msg string, pc uintptr, attrs []slog.Attr) bugRecord {
 	// Do we report this bugsnag as unhandled or handled?
 	var unhandled bool
 	if lvl >= h.unhandledLevel.Level() {
@@ -114,8 +110,7 @@ func (h *Handler) notify(ctx context.Context, t time.Time, lvl slog.Level, msg s
 		rawData = append(rawData, user)
 	}
 
-	// Notify Bugsnag. Ignore the error because bugsnag has already logged it.
-	_ = h.notifier.NotifySync(errForBugsnag, true, rawData...)
+	return bugRecord{err: errForBugsnag, rawData: rawData}
 }
 
 // accumulateRawData recursively iterates through all attributes and turns them
