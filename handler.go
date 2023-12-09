@@ -12,6 +12,84 @@ import (
 	"github.com/bugsnag/bugsnag-go/v2"
 )
 
+// NotifierOptions are options for NotifierWorkers
+type NotifierOptions struct {
+	// Notifier is the bugsnag notifier that will be used. It should be
+	// configured, and may contain custom rawData added to all events.
+	// If nil, a default one will be created.
+	Notifier *bugsnag.Notifier
+
+	// MaxNotifierConcurrency sets the maximum number of bugs that can be sent
+	// to bugsnag in parallel. It defaults to the number of CPU's.
+	// Bugs are placed on a buffered channel to be sent to bugsnag, in order
+	// to not block or delay the log call from returning. The bugs are then
+	// sent to bugsnag asynchronously by a number of workers equal to this int.
+	MaxNotifierConcurrency int
+}
+
+// NotifierWorkers can run a worker pool, where each worker
+// synchronously sends bugs to bugsnag. This gives us the ability to flush all
+// bugs before terminating an application, by calling [NotifierWorkers.Close]
+type NotifierWorkers struct {
+	notifier *bugsnag.Notifier
+	workerWG sync.WaitGroup
+	bugsCh   chan bugRecord
+	isClosed atomic.Bool
+}
+
+// NewNotifierWorkers creates and starts a worker pool, where each worker
+// synchronously sends bugs to bugsnag. This gives us the ability to flush all
+// bugs before terminating an application, by calling [NotifierWorkers.Close]
+func NewNotifierWorkers(opts *NotifierOptions) *NotifierWorkers {
+	if opts == nil {
+		opts = &NotifierOptions{}
+	}
+	if opts.MaxNotifierConcurrency < 1 {
+		opts.MaxNotifierConcurrency = runtime.NumCPU()
+	}
+	if opts.Notifier == nil {
+		opts.Notifier = bugsnag.New()
+	}
+
+	workers := &NotifierWorkers{
+		notifier: opts.Notifier,
+		bugsCh:   make(chan bugRecord, 4000),
+		workerWG: sync.WaitGroup{},
+		isClosed: atomic.Bool{},
+	}
+
+	workers.start(opts.MaxNotifierConcurrency)
+	return workers
+}
+
+// start runs a number of goroutines that consume from the bugsCh
+// and notify bugsnag.
+func (nw *NotifierWorkers) start(workerCount int) {
+	nw.workerWG.Add(workerCount)
+	for i := 0; i < workerCount; i++ {
+		go func() {
+			defer nw.workerWG.Done()
+			for bug := range nw.bugsCh {
+				// Notify Bugsnag. Ignore the error because bugsnag has already logged it.
+				_ = nw.notifier.NotifySync(bug.err, true, bug.rawData...)
+			}
+		}()
+	}
+}
+
+// closed returns if the NotifierWorkers are closed and not accepting new bugs
+func (nw *NotifierWorkers) closed() bool {
+	return nw.isClosed.Load()
+}
+
+// Close stops the NotifierWorkers from accepting any new bugs to its queue.
+// This call will block until all bugs currently queued have been sent.
+func (nw *NotifierWorkers) Close() {
+	nw.isClosed.Store(true)
+	close(nw.bugsCh)
+	nw.workerWG.Wait()
+}
+
 // HandlerOptions are options for a Handler
 type HandlerOptions struct {
 
@@ -28,26 +106,20 @@ type HandlerOptions struct {
 	// If UnhandledLevel is nil, the handler assumes slog.LevelError + 4.
 	UnhandledLevel slog.Leveler
 
-	// Notifier is the bugsnag notifier that will be used. It should be
-	// configured, and may contain custom rawData added to all events.
-	// If nil, a default one will be created.
-	Notifier *bugsnag.Notifier
-
-	// MaxNotifierConcurrency sets the maximum number of bugs that can be sent
-	// to bugsnag in parallel. It defaults to the number of CPU's.
-	// Bugs are placed on a buffered channel to be sent to bugsnag, in order
-	// to not block or delay the log call from returning. The bugs are then
-	// sent to bugsnag asynchronously by a number of workers equal to this int.
-	MaxNotifierConcurrency int
+	// Notifiers is a worker pool, where each worker synchronously sends
+	// bugs to bugsnag. This gives us the ability to flush all bugs before
+	// terminating an application, by calling Close on the pool or the handler.
+	// If nil, a default notifier worker pool will be started.
+	Notifiers *NotifierWorkers
 }
 
 // Handler is a slog.Handler middleware that will automatically send log
 // lines to Bugsnag (https://www.bugsnag.com/) if they are at least a certain
 // level (Error by default).
-// The latest error in the log line is sent as theprimary error, and all log
+// The latest error in the log line is sent as the primary error, and all log
 // attributes and the context are put into metadata and user tabs and sent with
 // the bug.
-// It passes the final record and attributes off to the enxt handler when finished.
+// It passes the final record and attributes off to the next handler when finished.
 // The Bugsnag V2 library should be configured before any logging is done.
 //
 //	bugsnag.Configure(bugsnag.Configuration{APIKey: ...})
@@ -56,10 +128,7 @@ type Handler struct {
 	goa            *groupOrAttrs
 	notifyLevel    slog.Leveler
 	unhandledLevel slog.Leveler
-	notifier       *bugsnag.Notifier
-	bugsCh         chan bugRecord
-	workerWG       *sync.WaitGroup
-	closed         *atomic.Bool
+	notifiers      *NotifierWorkers
 }
 
 var _ slog.Handler = &Handler{} // Assert conformance with interface
@@ -86,10 +155,10 @@ func NewMiddleware(options *HandlerOptions) func(slog.Handler) slog.Handler {
 // NewHandler creates a slog.Handler middleware that will automatically send log
 // lines to Bugsnag (https://www.bugsnag.com/) if they are at least a certain
 // level (Error by default).
-// The latest error in the log line is sent as theprimary error, and all log
+// The latest error in the log line is sent as the primary error, and all log
 // attributes and the context are put into metadata and user tabs and sent with
 // the bug.
-// It passes the final record and attributes off to the enxt handler when finished.
+// It passes the final record and attributes off to the next handler when finished.
 // The Bugsnag V2 library should be configured before any logging is done.
 //
 //	bugsnag.Configure(bugsnag.Configuration{APIKey: ...})
@@ -105,24 +174,16 @@ func NewHandler(next slog.Handler, opts *HandlerOptions) *Handler {
 	if opts.UnhandledLevel == nil {
 		opts.UnhandledLevel = slog.LevelError + 4
 	}
-	if opts.Notifier == nil {
-		opts.Notifier = bugsnag.New()
-	}
-	if opts.MaxNotifierConcurrency < 1 {
-		opts.MaxNotifierConcurrency = runtime.NumCPU()
+	if opts.Notifiers == nil {
+		opts.Notifiers = NewNotifierWorkers(nil)
 	}
 
-	h := &Handler{
+	return &Handler{
 		next:           next,
 		notifyLevel:    opts.NotifyLevel,
 		unhandledLevel: opts.UnhandledLevel,
-		notifier:       opts.Notifier,
-		bugsCh:         make(chan bugRecord, 4000),
-		workerWG:       &sync.WaitGroup{},
-		closed:         &atomic.Bool{},
+		notifiers:      opts.Notifiers,
 	}
-	h.startNotifierWorkers(opts.MaxNotifierConcurrency)
-	return h
 }
 
 // Enabled reports whether the next handler handles records at the given level.
@@ -167,9 +228,9 @@ func (h *Handler) Handle(ctx context.Context, r slog.Record) error {
 	newR.AddAttrs(finalAttrs...)
 
 	// Put on the channel to be sent to bugsnag
-	if newR.Level >= h.notifyLevel.Level() && !h.closed.Load() {
+	if newR.Level >= h.notifyLevel.Level() && !h.notifiers.closed() {
 		select {
-		case h.bugsCh <- h.logToBug(ctx, newR.Time, newR.Level, newR.Message, newR.PC, finalAttrs):
+		case h.notifiers.bugsCh <- h.logToBug(ctx, newR.Time, newR.Level, newR.Message, newR.PC, finalAttrs):
 		default:
 			// The buffered channel is full, the workers can't keep up,
 			h.logBufferFull(ctx, newR.Message, newR.PC)
@@ -197,26 +258,9 @@ func (h *Handler) WithAttrs(attrs []slog.Attr) slog.Handler {
 
 // Close stops the handler from sending any new bugs after this point to bugsnag,
 // but it will continue to pass the log records to the next handler.
-// This call will block until all bugs currently in flight have been sent.
+// This call will block until all bugs currently queued have been sent.
 func (h *Handler) Close() {
-	h.closed.Store(true)
-	close(h.bugsCh)
-	h.workerWG.Wait()
-}
-
-// startNotifierWorkers starts a number of goroutines that consume from the
-// bugsCh and notify bugsnag.
-func (h *Handler) startNotifierWorkers(workerCount int) {
-	h.workerWG.Add(workerCount)
-	for i := 0; i < workerCount; i++ {
-		go func() {
-			defer h.workerWG.Done()
-			for bug := range h.bugsCh {
-				// Notify Bugsnag. Ignore the error because bugsnag has already logged it.
-				_ = h.notifier.NotifySync(bug.err, true, bug.rawData...)
-			}
-		}()
-	}
+	h.notifiers.Close()
 }
 
 // logBufferFull sends a log message directly to the next handler to record
