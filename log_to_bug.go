@@ -119,7 +119,7 @@ func (h *Handler) logToBug(ctx context.Context, t time.Time, lvl slog.Level, msg
 // Attribute values are redacted based on the notifier config ParamsFilters.
 // accumulateRawData also finds the latest [error] and [bugsnag.User].
 func (h *Handler) accumulateRawData(errForBugsnag *error, user *bugsnag.User, md bugsnag.MetaData, tab string, attrs []slog.Attr) {
-	san := sanitizer{Filters: h.notifier.Config.ParamsFilters}
+	san := sanitizer{Filters: h.notifiers.notifier.Config.ParamsFilters}
 
 	for _, attr := range attrs {
 		if attr.Value.Kind() == slog.KindGroup {
@@ -150,7 +150,7 @@ func (h *Handler) accumulateRawData(errForBugsnag *error, user *bugsnag.User, md
 		}
 
 		// Replace with filtered if the key matches
-		if shouldRedact(attr.Key, h.notifier.Config.ParamsFilters) {
+		if shouldRedact(attr.Key, h.notifiers.notifier.Config.ParamsFilters) {
 			md.Add(tab, attr.Key, "[FILTERED]")
 			continue
 		}

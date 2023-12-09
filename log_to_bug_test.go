@@ -228,7 +228,7 @@ func TestLogToBug(t *testing.T) {
 	// Temporary handler
 	h := Handler{
 		unhandledLevel: slog.LevelError,
-		notifier:       notifier,
+		notifiers:      &NotifierWorkers{notifier: notifier},
 	}
 
 	// Set up the log contents
@@ -282,7 +282,7 @@ func TestLogToBug(t *testing.T) {
 	bug := h.logToBug(ctx, defaultTime, slog.LevelError, "main message", pc, attrs)
 
 	// Send the bug to our fake bugsnag server to verify the content
-	err = h.notifier.NotifySync(bug.err, true, bug.rawData...)
+	err = h.notifiers.notifier.NotifySync(bug.err, true, bug.rawData...)
 	if err != nil {
 		t.Error("Unable to notify with bug")
 	}

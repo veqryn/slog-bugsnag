@@ -91,10 +91,13 @@ func main() {
 This library has a convenience method that allow it to interoperate with [github.com/samber/slog-multi](https://github.com/samber/slog-multi),
 in order to easily setup slog workflows such as pipelines, fanout, routing, failover, etc.
 ```go
+notifiers := slogbugsnag.NewNotifierWorkers(&slogbugsnag.NotifierOptions{})
+defer notifiers.Close()
+
 slog.SetDefault(slog.New(slogmulti.
 	Pipe(slogcontext.NewMiddleware(&slogcontext.HandlerOptions{})).
 	Pipe(slogdedup.NewOverwriteMiddleware(&slogdedup.OverwriteHandlerOptions{})).
-	Pipe(slogbugsnag.NewMiddleware(&slogbugsnag.HandlerOptions{})).
+	Pipe(slogbugsnag.NewMiddleware(&slogbugsnag.HandlerOptions{Notifiers: notifiers})).
 	Handler(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{})),
 ))
 ```
