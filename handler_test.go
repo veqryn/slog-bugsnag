@@ -131,7 +131,7 @@ func TestHandlerOverloaded(t *testing.T) {
 				Sessions: svr.URL,
 			},
 		}),
-		bugsCh:   make(chan bugRecord),
+		bugsCh:   make(chan bugRecord, 1),
 		workerWG: sync.WaitGroup{},
 		isClosed: atomic.Bool{},
 	}
@@ -143,18 +143,25 @@ func TestHandlerOverloaded(t *testing.T) {
 
 	log.Error("this will be sent to fake bugsnag")
 
-	log.Error("this should trigger an extra log line about handler/workers overloaded")
+	// Depending on race conditions and available threads, we may need to log twice to trigger it, as one may sit in the buffer
+	log.Error("this could trigger an extra log line about handler/workers overloaded")
+	log.Error("this definitely should trigger an extra log line about handler/workers overloaded")
 
 	// Flush the channel and workers
 	h.Close()
 
 	// level=ERROR msg="slog-bugsnag bug buffer full; increase max concurrency or decrease bugs" original="this should trigger an extra log line about handler/workers overloaded"
-	if len(tester.Records) != 3 {
-		t.Fatal("Expected 3 log records; Got:", tester.Records)
+	if len(tester.Records) < 4 {
+		t.Fatal("Expected at least 4 log records; Got:", tester.Records)
 	}
 
-	// Should be second record
-	if !strings.Contains(tester.string(1), "slog-bugsnag bug buffer full; increase max concurrency or decrease bugs") {
-		t.Error("Expected second log line about bug buffer full; Got:", tester)
+	var found bool
+	for idx := range tester.Records {
+		if strings.Contains(tester.string(idx), "slog-bugsnag bug buffer full; increase max concurrency or decrease bugs") {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("Expected a log line about bug buffer full; Got:", tester.Records)
 	}
 }

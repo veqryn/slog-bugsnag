@@ -23,7 +23,7 @@ type NotifierOptions struct {
 	// to bugsnag in parallel. It defaults to the number of CPU's.
 	// Bugs are placed on a buffered channel to be sent to bugsnag, in order
 	// to not block or delay the log call from returning. The bugs are then
-	// sent to bugsnag asynchronously by a number of workers equal to this int.
+	// sent to bugsnag synchronously by a number of workers equal to this int.
 	MaxNotifierConcurrency int
 }
 
