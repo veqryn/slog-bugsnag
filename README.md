@@ -12,6 +12,11 @@ Golang structured logging (slog) handler middleware for Bugsnag.
 Automatically send all Error level logs to Bugsnag, along with all attributes and context.
 Never forget to snag another bug again.
 
+### Other Great SLOG Utilities
+- [slogctx](https://github.com/veqryn/slog-context): Add attributes to context and have them automatically added to all log lines. Work with a logger stored in context.
+- [slogotel](https://github.com/veqryn/slog-context/tree/main/otel): Automatically extract and add [OpenTelemetry](https://opentelemetry.io/) TraceID's to all log lines.
+- [slogdedup](https://github.com/veqryn/slog-dedup): Middleware that deduplicates and sorts attributes. Particularly useful for JSON logging.
+- [slogbugsnag](https://github.com/veqryn/slog-bugsnag): Middleware that pipes Errors to [Bugsnag](https://www.bugsnag.com/).
 
 ## Install
 `go get github.com/veqryn/slog-bugsnag`
