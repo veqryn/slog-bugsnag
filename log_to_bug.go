@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/bugsnag/bugsnag-go/v2"
@@ -119,8 +120,6 @@ func (h *Handler) logToBug(ctx context.Context, t time.Time, lvl slog.Level, msg
 // Attribute values are redacted based on the notifier config ParamsFilters.
 // accumulateRawData also finds the latest [error] and [bugsnag.User].
 func (h *Handler) accumulateRawData(errForBugsnag *error, user *bugsnag.User, md bugsnag.MetaData, tab string, attrs []slog.Attr) {
-	san := sanitizer{Filters: h.notifiers.notifier.Config.ParamsFilters}
-
 	for _, attr := range attrs {
 		if attr.Value.Kind() == slog.KindGroup {
 			h.accumulateRawData(errForBugsnag, user, md, attr.Key, attr.Value.Group())
@@ -157,9 +156,17 @@ func (h *Handler) accumulateRawData(errForBugsnag *error, user *bugsnag.User, md
 
 		// Always resolve log attribute values
 		attr.Value = attr.Value.Resolve()
-		val := san.Sanitize(attr.Value.Any())
-		md.Add(tab, attr.Key, val)
+		md.Add(tab, attr.Key, attr.Value.Any())
 	}
+}
+
+func shouldRedact(key string, filters []string) bool {
+	for _, filter := range filters {
+		if strings.Contains(strings.ToLower(key), strings.ToLower(filter)) {
+			return true
+		}
+	}
+	return false
 }
 
 // bsSeverity converts a [slog.Level] to a [bugsnag.severity]
