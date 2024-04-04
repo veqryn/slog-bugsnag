@@ -11,6 +11,26 @@ import (
 	"github.com/bugsnag/bugsnag-go/v2"
 )
 
+type bugsnagContext interface {
+	BugsnagContext() string
+}
+
+type Context string
+
+func (ctx Context) BugsnagContext() string {
+	return string(ctx)
+}
+
+type bugsnagErrorClass interface {
+	BugsnagErrorClass() string
+}
+
+type ErrorClass string
+
+func (ec ErrorClass) BugsnagErrorClass() string {
+	return string(ec)
+}
+
 // bugsnagUserID is a sentinel interface that gives you another option to
 // customize how bugsnag fills the ID in the "User" tab
 type bugsnagUserID interface {
@@ -126,17 +146,36 @@ func (h *Handler) accumulateRawData(errForBugsnag *error, user *bugsnag.User, md
 			continue
 		}
 
+		value := attr.Value.Any()
+
+		switch value {
+		case bugsnag.SeverityInfo, bugsnag.SeverityWarning, bugsnag.SeverityWarning:
+			// TODO: fix
+		}
+
 		// Because the attributes slice we are iterating through is ordered from
 		// oldest to newest, we should overwrite the error/user to get the latest one.
 		// Because there could be multiple, we still add these to the MetaData map.
-		switch t := attr.Value.Any().(type) {
+		switch t := value.(type) {
 		case error:
 			if t != nil {
 				*errForBugsnag = t
 			}
 
+		case bugsnag.HandledState:
+			// TODO: fix
+
+		case bugsnagContext:
+			// TODO: fix
+
+		case bugsnagErrorClass:
+			// TODO: fix
+
 		case bugsnag.User:
 			*user = t
+
+		case *bugsnag.User:
+				*user = *t
 
 		case bugsnagUserID:
 			user.Id = t.BugsnagUserID()
