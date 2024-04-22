@@ -3,7 +3,7 @@ module github.com/veqryn/slog-bugsnag
 go 1.21
 
 require (
-	github.com/bugsnag/bugsnag-go/v2 v2.3.1
+	github.com/bugsnag/bugsnag-go/v2 v2.4.0
 	github.com/pkg/errors v0.9.1
 )
 
